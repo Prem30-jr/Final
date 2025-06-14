@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { BrowserQRCodeReader, IScannerControls } from '@zxing/browser';
 import { QRData, Transaction } from '../types';
-import { saveTransaction } from '../utils/storage';
+import { saveTransaction, getTransactionById } from '../utils/storage';
 import { syncTransactionToBlockchain } from '../utils/blockchain';
 import { verifySignature } from '../utils/crypto';
 import { getNetworkState } from '../utils/network';
@@ -86,27 +86,29 @@ const QRScanner: React.FC = () => {
         // Store locally
         setProcessingStatus('storing');
         await new Promise(resolve => setTimeout(resolve, 300)); 
-        saveTransaction(scannedData.transaction);
+        const transaction = {
+          ...scannedData.transaction,
+          senderVerified: true,
+          verificationTimestamp: Date.now()
+        };
+        
+        saveTransaction(transaction);
         
         // Update credits
-        updateCredits(scannedData.transaction);
+        updateCredits(transaction);
         
         // Sync to blockchain if online
         const isOnline = await getNetworkState();
         if (isOnline) {
           setProcessingStatus('syncing');
-          await syncTransactionToBlockchain(scannedData.transaction);
+          await syncTransactionToBlockchain(transaction);
         }
         
         setProcessingStatus('complete');
         
         toast({
-          title: "Transaction Processed",
-          description: `${scannedData.transaction.amount.toFixed(2)} credits processed. ${
-            isOnline 
-              ? "Transaction has been verified and synced." 
-              : "Transaction will sync when online."
-          }`,
+          title: "Transaction Verified",
+          description: `You have verified this transaction. Waiting for recipient verification.`,
         });
       } catch (error) {
         console.error('Error completing transaction:', error);
@@ -149,12 +151,18 @@ const QRScanner: React.FC = () => {
         setErrorMessage('Invalid signature. Transaction may be tampered with.');
         return;
       }
+
+      // Check if transaction is already verified by sender
+      const existingTransaction = await getTransactionById(data.transaction.id);
+      if (existingTransaction?.senderVerified) {
+        setProcessingStatus('error');
+        setErrorMessage('This transaction has already been verified by the sender.');
+        return;
+      }
       
       // Then require password for sender
       setProcessingStatus('password_required');
       setShowPasswordDialog(true);
-      
-      // The rest of the processing will happen after password verification in handlePasswordSubmit
       
     } catch (error) {
       console.error('Error processing transaction:', error);
