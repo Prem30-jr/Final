@@ -81,7 +81,44 @@ const QRScanner: React.FC = () => {
     if (password === SENDER_PASSWORD) {
       setShowPasswordDialog(false);
       setPassword('');
-      await processTransaction(scannedData);
+      
+      try {
+        // Store locally
+        setProcessingStatus('storing');
+        await new Promise(resolve => setTimeout(resolve, 300)); 
+        saveTransaction(scannedData.transaction);
+        
+        // Update credits
+        updateCredits(scannedData.transaction);
+        
+        // Sync to blockchain if online
+        const isOnline = await getNetworkState();
+        if (isOnline) {
+          setProcessingStatus('syncing');
+          await syncTransactionToBlockchain(scannedData.transaction);
+        }
+        
+        setProcessingStatus('complete');
+        
+        toast({
+          title: "Transaction Processed",
+          description: `${scannedData.transaction.amount.toFixed(2)} credits processed. ${
+            isOnline 
+              ? "Transaction has been verified and synced." 
+              : "Transaction will sync when online."
+          }`,
+        });
+      } catch (error) {
+        console.error('Error completing transaction:', error);
+        setProcessingStatus('error');
+        setErrorMessage('Failed to complete the transaction.');
+        
+        toast({
+          title: "Error",
+          description: "Failed to complete the transaction. Please try again.",
+          variant: "destructive"
+        });
+      }
     } else {
       toast({
         title: "Invalid Password",
@@ -96,13 +133,7 @@ const QRScanner: React.FC = () => {
     if (!data) return;
     
     try {
-      // Always require password for sender
-      setProcessingStatus('password_required');
-      setShowPasswordDialog(true);
-      return;
-
-      console.log("Processing transaction:", data);
-      
+      // First verify the signature
       setProcessingStatus('verifying');
       await new Promise(resolve => setTimeout(resolve, 300)); 
       
@@ -119,31 +150,11 @@ const QRScanner: React.FC = () => {
         return;
       }
       
-      // Store locally
-      setProcessingStatus('storing');
-      await new Promise(resolve => setTimeout(resolve, 300)); 
-      saveTransaction(data.transaction);
+      // Then require password for sender
+      setProcessingStatus('password_required');
+      setShowPasswordDialog(true);
       
-      // Update credits
-      updateCredits(data.transaction);
-      
-      // Sync to blockchain if online
-      const isOnline = await getNetworkState();
-      if (isOnline) {
-        setProcessingStatus('syncing');
-        await syncTransactionToBlockchain(data.transaction);
-      }
-      
-      setProcessingStatus('complete');
-      
-      toast({
-        title: "Transaction Processed",
-        description: `${data.transaction.amount.toFixed(2)} credits processed. ${
-          isOnline 
-            ? "Transaction has been verified and synced." 
-            : "Transaction will sync when online."
-        }`,
-      });
+      // The rest of the processing will happen after password verification in handlePasswordSubmit
       
     } catch (error) {
       console.error('Error processing transaction:', error);
